@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Matrix Rain — Plash Wallpaper</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+  }
+
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* Optional: subtle scanline overlay for depth */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+
+  // ─── CONFIG ────────────────────────────────────────────────────
+  const CONFIG = {
+    fontSize:    14,
+    speedMin:    0.3,   // drop speed — frames per pixel step (lower = faster)
+    speedMax:    0.9,
+    spawnChance: 0.975, // probability a column resets after reaching bottom
+    glitchChance: 0.0008, // chance per frame a column gets a glitch burst
+    fadeAlpha:   0.05,  // trail fade — lower = longer trail
+    // Character sets layered for visual richness
+    chars: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz',
+  };
+
+  // ─── COLOR THEMES ──────────────────────────────────────────────
+  const THEMES = {
+    green: {
+      head:   '#e8ffe8',
+      bright: '#00ff41',
+      mid:    '#00cc33',
+      dim:    '#007a1f',
+      glow:   'rgba(0,255,65,0.15)',
+    },
+    cyan: {
+      head:   '#e0ffff',
+      bright: '#00e5ff',
+      mid:    '#00b8cc',
+      dim:    '#006b7a',
+      glow:   'rgba(0,229,255,0.15)',
+    },
+    amber: {
+      head:   '#fffff0',
+      bright: '#ffd700',
+      mid:    '#cc9900',
+      dim:    '#7a5a00',
+      glow:   'rgba(255,215,0,0.12)',
+    },
+    purple: {
+      head:   '#f8f0ff',
+      bright: '#cf6bff',
+      mid:    '#9933cc',
+      dim:    '#5a007a',
+      glow:   'rgba(207,107,255,0.12)',
+    },
+  };
+
+  // Auto-cycle theme every 4 minutes, or detect query param ?theme=cyan
+  const params = new URLSearchParams(location.search);
+  const themeNames = Object.keys(THEMES);
+  let themeIdx = themeNames.indexOf(params.get('theme') || 'green');
+  if (themeIdx < 0) themeIdx = 0;
+  let theme = THEMES[themeNames[themeIdx]];
+
+  // ─── STATE ─────────────────────────────────────────────────────
+  let cols, drops, speeds, chars_cache;
+
+  function init() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    cols = Math.floor(canvas.width / CONFIG.fontSize);
+
+    drops       = new Float32Array(cols);
+    speeds      = new Float32Array(cols);
+    chars_cache = [];
+
+    for (let i = 0; i < cols; i++) {
+      // Stagger start positions so it doesn't all start together
+      drops[i]  = Math.random() * -(canvas.height / CONFIG.fontSize);
+      speeds[i] = CONFIG.speedMin + Math.random() * (CONFIG.speedMax - CONFIG.speedMin);
+      chars_cache[i] = randomChar();
+    }
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function randomChar() {
+    return CONFIG.chars[Math.floor(Math.random() * CONFIG.chars.length)];
+  }
+
+  // ─── RENDER LOOP ───────────────────────────────────────────────
+  let last = 0;
+  const TARGET_FPS = 30;
+  const FRAME_MS   = 1000 / TARGET_FPS;
+
+  function draw(ts) {
+    requestAnimationFrame(draw);
+    if (ts - last < FRAME_MS) return;
+    last = ts;
+
+    // Fade previous frame
+    ctx.fillStyle = `rgba(0,0,0,${CONFIG.fadeAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.font = `${CONFIG.fontSize}px monospace`;
+
+    for (let i = 0; i < cols; i++) {
+      const x = i * CONFIG.fontSize;
+      const y = drops[i] * CONFIG.fontSize;
+
+      // Glitch: random brightness spike
+      const isGlitch = Math.random() < CONFIG.glitchChance;
+
+      if (drops[i] > 0) {
+        // Head character — brightest, with subtle glow sim
+        ctx.fillStyle = isGlitch ? theme.bright : theme.head;
+        chars_cache[i] = randomChar();
+        ctx.fillText(chars_cache[i], x, y);
+
+        // Second char — bright
+        if (drops[i] > 1) {
+          ctx.fillStyle = isGlitch ? theme.head : theme.bright;
+          ctx.fillText(randomChar(), x, y - CONFIG.fontSize);
+        }
+
+        // Third char — mid
+        if (drops[i] > 2) {
+          ctx.fillStyle = theme.mid;
+          ctx.fillText(randomChar(), x, y - CONFIG.fontSize * 2);
+        }
+      }
+
+      // Advance drop
+      drops[i] += speeds[i];
+
+      // Reset when column exits bottom
+      if (drops[i] * CONFIG.fontSize > canvas.height && Math.random() > CONFIG.spawnChance) {
+        drops[i] = 0;
+        speeds[i] = CONFIG.speedMin + Math.random() * (CONFIG.speedMax - CONFIG.speedMin);
+      }
+    }
+  }
+
+  // ─── RESIZE ────────────────────────────────────────────────────
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(init, 150);
+  });
+
+  // ─── THEME CYCLE (every 4 min if no ?theme= param) ────────────
+  if (!params.get('theme')) {
+    setInterval(() => {
+      themeIdx = (themeIdx + 1) % themeNames.length;
+      theme = THEMES[themeNames[themeIdx]];
+    }, 4 * 60 * 1000);
+  }
+
+  // ─── KICK OFF ─────────────────────────────────────────────────
+  init();
+  requestAnimationFrame(draw);
+</script>
+</body>
+</html>
